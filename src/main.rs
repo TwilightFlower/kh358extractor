@@ -1,11 +1,14 @@
 mod iohelper;
+mod util;
 use std::{
 	env::args,
 	io,
 	path::PathBuf,
 	str,
 	mem::replace,
-	ffi::OsString
+	ffi::OsString,
+	convert::{TryFrom, TryInto},
+	fmt::{Debug},
 };
 use bytes::{
 	Buf, Bytes
@@ -14,6 +17,7 @@ use nintendo_lz::decompress;
 use iohelper::{
 	IOHelper, IOManager, FileQueueEntry, RelPath
 };
+use crate::util::*;
 
 type BErr = Box<dyn std::error::Error + 'static>;
 
@@ -62,11 +66,11 @@ fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BErr> 
 			file.compression_hint = Some(false);
 			helper.queue_or_write(file)?
 		},
-		FileType::HPAK | FileType::PK2D | FileType::PKAC => {
+		FileType::HPAK | FileType::PK2D => {
 			//println!("extract asset store {:?}", file.path);
 			helper.create_dir(&file.path)?;
-			let parsed = parse_asset_container(&file.content).unwrap();
-			let map = parsed.get_type_map();
+			let parsed = parse_asset_container(&file.content);
+			let map = parsed.get_type_map().try_unwrap().map_err(|x| x.strip_data())?;
 			for (typ, group) in &map {
 				for (i, data) in group.iter().enumerate() {
 					let name = OsString::from(format!("{}.{}", i, typ.get_extension()));
@@ -79,6 +83,23 @@ fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BErr> 
 						compression_hint: None
 					})?
 				}
+			}
+		},
+		FileType::PKAC => {
+			helper.create_dir(&file.path)?;
+			let parsed = parse_asset_container(&file.content).try_unwrap_other()?;
+			let pkac: PKAC = parsed.try_into()?;
+			for (name, subfile) in pkac.files {
+				let ty = FileType::guess_from(&subfile, true); // unsure if can be compressed or not
+				let name = OsString::from(format!("{}.{}", name, ty.get_extension()));
+				let mut new_path = file.path.clone();
+				new_path.push(name);
+				helper.queue_or_write(FileQueueEntry {
+					path: new_path,
+					content: subfile,
+					type_hint: Some(ty),
+					compression_hint: None
+				})?;
 			}
 		}
 		_ => ()
@@ -207,6 +228,7 @@ struct P2File {
 	name: Option<String>,
 }
 
+#[derive(Debug)]
 struct HPAK {
 	nsbca: Vec<Bytes>,
 	nsbva: Vec<Bytes>,
@@ -248,6 +270,7 @@ impl From<[Option<Vec<Bytes>>; 8]> for HPAK {
 	}
 }
 
+#[derive(Debug)]
 struct PK2D {
 	nclr: Vec<Bytes>,
 	ncgr: Vec<Bytes>,
@@ -289,59 +312,67 @@ impl From<[Option<Vec<Bytes>>; 8]> for PK2D {
 	}
 }
 
+#[derive(Debug)]
 struct PKAC {
-	uk0: Vec<Bytes>,
-	uk1: Vec<Bytes>,
-	uk2: Vec<Bytes>,
-	uk3: Vec<Bytes>,
-	uk4: Vec<Bytes>,
-	uk5: Vec<Bytes>,
-	uk6: Vec<Bytes>,
-	uk7: Vec<Bytes>,
+	files: Vec<(String, Bytes)>
 }
 
-impl PKAC {
-	pub fn get_type_map(&self) -> [(FileType, &[Bytes]); 8] {
-		[
-			(FileType::Unknown0, &self.uk0),
-			(FileType::Unknown1, &self.uk1),
-			(FileType::Unknown2, &self.uk2),
-			(FileType::Unknown3, &self.uk3),
-			(FileType::Unknown4, &self.uk4),
-			(FileType::Unknown5, &self.uk5),
-			(FileType::Unknown6, &self.uk6),
-			(FileType::Unknown7, &self.uk7),
-		]
-	}
-}
-
-impl From<[Option<Vec<Bytes>>; 8]> for PKAC {
-	fn from(mut other: [Option<Vec<Bytes>>; 8]) -> Self {
-		PKAC {
-			uk0: replace(&mut other[0], None).unwrap(),
-			uk1: replace(&mut other[1], None).unwrap(),
-			uk2: replace(&mut other[2], None).unwrap(),
-			uk3: replace(&mut other[3], None).unwrap(),
-			uk4: replace(&mut other[4], None).unwrap(),
-			uk5: replace(&mut other[5], None).unwrap(),
-			uk6: replace(&mut other[6], None).unwrap(),
-			uk7: replace(&mut other[7], None).unwrap(),
+impl TryFrom<[Option<Vec<Bytes>>; 8]> for PKAC {
+	type Error = BErr;
+	fn try_from(other: [Option<Vec<Bytes>>; 8]) -> Result<Self, Self::Error> {
+		if let Some(nametable) = &other[0] {
+			if let Some(files) = &other[1] {
+				let nametable = read_nametable(&nametable[0])?;
+				if nametable.len() >= files.len() {
+					Ok(PKAC{
+						files: nametable.iter().enumerate().map(|(i, name)| {(name.clone(), files[i].clone())}).collect()
+					})
+				} else {
+					Err("Name table shorter than file table".into())
+				}
+			} else {
+				Err("PKAC format requires index 1 be present".into())
+			}
+		} else {
+			Err("PKAC format requires index 0 be present as a name table".into())
 		}
 	}
 }
 
+fn read_nametable(orig_buf: &[u8]) -> Result<Vec<String>, BErr> {
+	let mut buf = orig_buf;
+	let mut names = Vec::new();
+	let n = buf.get_u16_le();
+	for _ in 0..n {
+		let offset = buf.get_u16_le();
+		let str_buf = &orig_buf[offset as usize..];
+		let first_nul = str_buf.iter().position(|x| *x == 0).unwrap();
+		names.push(String::from_utf8(orig_buf[offset as usize..offset as usize + first_nul].to_vec())?);
+	}
+	Ok(names)
+}
+
+#[derive(Debug)]
 enum AssetBundle {
 	HPAK(HPAK),
 	PK2D(PK2D),
-	PKAC(PKAC)
+	Other([Option<Vec<Bytes>>; 8])
 }
 
 impl AssetBundle {
-	pub fn get_type_map(&self) -> [(FileType, &[Bytes]); 8] {
+	pub fn get_type_map(&self) -> Option<[(FileType, &[Bytes]); 8]> {
 		match self {
-			Self::HPAK(h) => h.get_type_map(),
-			Self::PK2D(p) => p.get_type_map(),
-			Self::PKAC(p) => p.get_type_map()
+			Self::HPAK(h) => Some(h.get_type_map()),
+			Self::PK2D(p) => Some(p.get_type_map()),
+			_ => None
+		}
+	}
+	
+	pub fn try_unwrap_other(self) -> Result<[Option<Vec<Bytes>>; 8], UnwrapError<AssetBundle>> {
+		if let Self::Other(data) = self {
+			Ok(data)
+		} else {
+			Err(UnwrapError::create(self, "called try_unwrap_other on non-other value".into()))
 		}
 	}
 }
@@ -423,7 +454,7 @@ const PK2D_MAGIC: u32 = 0x504B3244; // "PK2D" as an int
 const PKAC_MAGIC: u32 = 0x504B4143; // "PKAC" as an int
 const P2_MAGIC: u16 = 0x3250; // "2P" as an int (little endian shenanigans)
 
-fn parse_asset_container(orig_buf: &[u8]) -> Result<AssetBundle, u32> {
+fn parse_asset_container(orig_buf: &[u8]) -> AssetBundle {
 	let mut buf = orig_buf;
 	let magic = buf.get_u32_le();
 	buf.get_u32(); // padding
@@ -444,10 +475,9 @@ fn parse_asset_container(orig_buf: &[u8]) -> Result<AssetBundle, u32> {
 		}
 	}
 	match magic {
-		HPAK_MAGIC => Ok(AssetBundle::HPAK(file_groups.into())),
-		PK2D_MAGIC => Ok(AssetBundle::PK2D(file_groups.into())),
-		PKAC_MAGIC => Ok(AssetBundle::PKAC(file_groups.into())),
-		_ => Err(magic)
+		HPAK_MAGIC => AssetBundle::HPAK(file_groups.into()),
+		PK2D_MAGIC => AssetBundle::PK2D(file_groups.into()),
+		_ => AssetBundle::Other(file_groups)
 	}
 }
 
