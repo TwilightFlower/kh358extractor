@@ -1,5 +1,6 @@
 mod iohelper;
 mod util;
+mod magic;
 use std::{
 	env::args,
 	io,
@@ -18,6 +19,7 @@ use iohelper::{
 	IOHelper, IOManager, FileQueueEntry, RelPath
 };
 use crate::util::*;
+use crate::magic::*;
 
 type BErr = Box<dyn std::error::Error + 'static>;
 
@@ -144,6 +146,7 @@ pub enum FileType {
 	NSBMA,
 	NSBTP,
 	NSBTA,
+	NSBTX,
 	Unknown5,
 	Unknown6,
 	NSBMD,
@@ -157,7 +160,9 @@ pub enum FileType {
 	Unknown4,
 	NANR,
 	NSCR,
-	Unknown7
+	NFTR,
+	Unknown7,
+	SDAT
 }
 
 impl FileType {
@@ -168,23 +173,39 @@ impl FileType {
 		let magic = buf.get_u32_le();
 		let magic_16 = magic & 0xFFFF;
 		let magic_8 = magic & 0xFF;
-		if magic == HPAK_MAGIC {
-			Self::HPAK
-		} else if magic == PK2D_MAGIC {
-			Self::PK2D
-		} else if magic == PKAC_MAGIC {
-			Self::PKAC
-		} else if magic_16 == P2_MAGIC as u32 {
-			Self::P2
-		} else if (magic_8 == 0x10 || magic_8 == 0x11) && could_be_compressed {
-			Self::LZ
-		} else {
-			Self::OtherOrNotGuessable
+		match magic {
+			HPAK_MAGIC => Self::HPAK,
+			PK2D_MAGIC => Self::PK2D,
+			PKAC_MAGIC => Self::PKAC,
+			NSBMD_MAGIC => Self::NSBMD,
+			NSBTX_MAGIC => Self::NSBTX,
+			NSBCA_MAGIC => Self::NSBCA,
+			NSBTP_MAGIC => Self::NSBTP,
+			NSBTA_MAGIC => Self::NSBTA,
+			NSBMA_MAGIC => Self::NSBMA,
+			NSBVA_MAGIC => Self::NSBVA,
+			NCGR_MAGIC => Self::NCGR,
+			NCLR_MAGIC => Self::NCLR,
+			NSCR_MAGIC => Self::NSCR,
+			NFTR_MAGIC => Self::NFTR,
+			NCER_MAGIC => Self::NCER,
+			NANR_MAGIC => Self::NANR,
+			SDAT_MAGIC => Self::SDAT,
+			_ => {
+				if magic_16 == P2_MAGIC as u32 {
+					Self::P2
+				} else if (magic_8 == 0x10 || magic_8 == 0x11) && could_be_compressed {
+					Self::LZ
+				} else {
+					Self::OtherOrNotGuessable
+				}
+			}
 		}
 	}
 	
 	fn get_extension(&self) -> &'static str {
 		match self {
+			Self::SDAT => "sdat",
 			Self::P2 => "p2",
 			Self::LZ => "lz",
 			Self::HPAK => "hpak",
@@ -195,6 +216,7 @@ impl FileType {
 			Self::NSBMA => "nsbma",
 			Self::NSBTP => "nsbtp",
 			Self::NSBTA => "nsbta",
+			Self::NSBTX => "nsbtx",
 			Self::Unknown5 => "5.bin",
 			Self::Unknown6 => "6.bin",
 			Self::NSBMD => "nsbmd",
@@ -208,6 +230,7 @@ impl FileType {
 			Self::Unknown4 => "4.bin",
 			Self::NANR => "nanr",
 			Self::NSCR => "nscr",
+			Self::NFTR => "nftr",
 			Self::Unknown7 => "7.bin",
 			Self::OtherOrNotGuessable => "bin"
 		}
@@ -448,11 +471,6 @@ impl P2File {
 		}
 	}
 }
-
-const HPAK_MAGIC: u32 = 0x4850414B; // "HPAK" as an int
-const PK2D_MAGIC: u32 = 0x504B3244; // "PK2D" as an int
-const PKAC_MAGIC: u32 = 0x504B4143; // "PKAC" as an int
-const P2_MAGIC: u16 = 0x3250; // "2P" as an int (little endian shenanigans)
 
 fn parse_asset_container(orig_buf: &[u8]) -> AssetBundle {
 	let mut buf = orig_buf;
