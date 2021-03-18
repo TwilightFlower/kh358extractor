@@ -5,7 +5,7 @@ use crate::{
 	meta::{MetaRef, FileMeta}
 };
 use std::{
-	io::{prelude::*},
+	io::{prelude::*, BufWriter},
 	ffi::{OsString, OsStr},
 	io,
 	path::PathBuf,
@@ -28,13 +28,13 @@ impl IOManager {
 			file_handler(entry, mref, hlp)
 		}, move |s| {
 			setup_fn(IOHelper {
-				in_root: in_root.clone(), out_root: out_root.clone(), file_tx: s
+				in_root: in_root.clone(), out_root: out_root.clone(), file_tx: Some(s)
 			})
 		});
 		IOManager {
 			helper: IOHelper {
 				in_root: ic, out_root: oc,
-				file_tx: pool.task_sender()
+				file_tx: Some(pool.task_sender())
 			},
 			pool
 		}
@@ -53,7 +53,7 @@ impl IOManager {
 pub struct IOHelper {
 	in_root: PathBuf,
 	out_root: PathBuf,
-	file_tx: TaskSender<FileQueueEntryInternal>
+	file_tx: Option<TaskSender<FileQueueEntryInternal>>
 }
 
 impl IOHelper {
@@ -82,6 +82,7 @@ impl IOHelper {
 	}
 
 	pub fn write_file(&self, path: &RelPath, content: &[u8]) -> io::Result<()> {
+		println!("write {:?}", path);
 		let mut path = path.clone();
 		let syspath = path.resolve(self.out_root.clone());
 		path.pop();
@@ -94,18 +95,26 @@ impl IOHelper {
 		create_dir_all(path.resolve(self.out_root.clone()))
 	}
 	
-	pub fn queue_or_write(&self, entry: FileQueueEntry, meta_ref: MetaRef<FileMeta>) -> io::Result<()> {
+	pub fn queue_or_write(&self, entry: FileQueueEntry, meta_ref: MetaRef<FileMeta>) -> Result<(), BErr> {
 		if entry.get_or_guess_type().still_packed() {
-			self.file_tx.send(FileQueueEntryInternal{entry, meta_ref});
+			self.file_tx.as_ref().unwrap().send(FileQueueEntryInternal{entry, meta_ref})?;
 			Ok(())
 		} else {
 			meta_ref.submit(FileMeta::OtherFile(entry.path.peek()));
-			self.write_file(&entry.path, &entry.content)
+			Ok(self.write_file(&entry.path, &entry.content)?)
 		}
 	}
 	
 	pub fn is_dir(&self, path: &RelPath) -> bool {
 		path.resolve(self.in_root.clone()).is_dir()
+	}
+	
+	pub fn new(in_path: PathBuf, out_path: PathBuf) -> Self {
+		IOHelper {
+			in_root: in_path,
+			out_root: out_path,
+			file_tx: None
+		}
 	}
 }
 
@@ -116,7 +125,9 @@ pub struct RelPath {
 
 impl RelPath {
 	pub fn push(&mut self, p: String) {
-		self.path.push(p)
+		if !p.is_empty() {
+			self.path.push(p)
+		}
 	}
 	
 	pub fn pop(&mut self) -> Option<String> {

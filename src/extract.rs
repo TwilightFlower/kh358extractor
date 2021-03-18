@@ -1,17 +1,16 @@
 use crate::{P2File, P2Subfile, HPAK, PK2D, PKAC, GroupedFiles, BErr, FileType};
 use crate::iohelper::{
-	IOHelper, IOManager, FileQueueEntry, RelPath
+	IOHelper, FileQueueEntry
 };
-use crate::util::{UnwrapError, TryUnwrap};
+use crate::util::{TryUnwrap};
 use crate::meta::{
 	FileMeta, MetaRef, P2Meta, NamedP2Meta, LZMeta, LZType, HPAKMeta, PK2DMeta, PKACMeta
 };
 use bytes::{Bytes, Buf};
 use std::{
-	mem::replace,
+	mem::{replace},
 	convert::{TryFrom, TryInto},
-	str,
-	ffi::OsString
+	str
 };
 use nintendo_lz::decompress;
 
@@ -76,42 +75,27 @@ struct PartialP2File {
 	compressed: Option<bool>
 }
 
-impl From<[Option<Vec<Bytes>>; 8]> for HPAK {
-	fn from(mut other: [Option<Vec<Bytes>>; 8]) -> Self {
-		HPAK {
-			nsbca: replace(&mut other[0], None).unwrap(),
-			nsbva: replace(&mut other[1], None).unwrap(),
-			nsbma: replace(&mut other[2], None).unwrap(),
-			nsbtp: replace(&mut other[3], None).unwrap(),
-			nsbta: replace(&mut other[4], None).unwrap(),
-			unknown5: replace(&mut other[5], None).unwrap(),
-			unknown6: replace(&mut other[6], None).unwrap(),
-			nsbmd: replace(&mut other[7], None).unwrap()
-		}
+impl From<[Vec<Bytes>; 8]> for HPAK {
+	fn from(other: [Vec<Bytes>; 8]) -> Self {
+		let [nsbca, nsbva, nsbma, nsbtp, nsbta, unknown5, unknown6, nsbmd] = other;
+		HPAK{nsbca, nsbva, nsbma, nsbtp, nsbta, unknown5, unknown6, nsbmd}
 	}
 }
 
-impl From<[Option<Vec<Bytes>>; 8]> for PK2D {
-	fn from(mut other: [Option<Vec<Bytes>>; 8]) -> Self {
-		PK2D {
-			nclr: replace(&mut other[0], None).unwrap(),
-			ncgr: replace(&mut other[1], None).unwrap(),
-			unknown2: replace(&mut other[2], None).unwrap(),
-			ncer: replace(&mut other[3], None).unwrap(),
-			unknown4: replace(&mut other[4], None).unwrap(),
-			nanr: replace(&mut other[5], None).unwrap(),
-			nscr: replace(&mut other[6], None).unwrap(),
-			unknown7: replace(&mut other[7], None).unwrap()
-		}
+impl From<[Vec<Bytes>; 8]> for PK2D {
+	fn from(other: [Vec<Bytes>; 8]) -> Self {
+		let [nclr, ncgr, unknown2, ncer, unknown4, nanr, nscr, unknown7] = other;
+		PK2D{nclr, ncgr, unknown2, ncer, unknown4, nanr, nscr, unknown7}
 	}
 }
 
-impl TryFrom<[Option<Vec<Bytes>>; 8]> for PKAC {
+impl TryFrom<[Vec<Bytes>; 8]> for PKAC {
 	type Error = BErr;
-	fn try_from(other: [Option<Vec<Bytes>>; 8]) -> Result<Self, Self::Error> {
-		if let Some(nametable) = &other[0] {
-			if let Some(files) = &other[1] {
-				let nametable = read_nametable(&nametable[0])?;
+	fn try_from(other: [Vec<Bytes>; 8]) -> Result<Self, Self::Error> {
+		if !other[0].is_empty() {
+			if !other[1].is_empty() {
+				let nametable = read_nametable(&other[0][0])?;
+				let files = &other[1];
 				if nametable.len() >= files.len() {
 					Ok(PKAC{
 						files: nametable.iter().enumerate().map(|(i, name)| {(name.clone(), files[i].clone())}).collect()
@@ -144,11 +128,10 @@ fn read_nametable(orig_buf: &[u8]) -> Result<Vec<String>, BErr> {
 impl Parse for GroupedFiles {
 	fn parse(orig_buf: &[u8]) -> GroupedFiles {
 		let mut buf = orig_buf;
-		let magic = buf.get_u32_le();
+		let _magic = buf.get_u32_le();
 		buf.get_u32(); // padding
 		let mut file_groups = make_file_table();
-		for f in &mut file_groups {
-			let files = f.as_mut().unwrap();
+		for files in &mut file_groups {
 			let f_info_offset = buf.get_u32_le() as usize;
 			if f_info_offset == 0xFFFFFFFF {
 				continue; // used to indicate empty
@@ -166,8 +149,8 @@ impl Parse for GroupedFiles {
 	}
 }
 
-fn make_file_table() -> [Option<Vec<Bytes>>; 8] { // lmao
-	[Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new())]
+fn make_file_table() -> [Vec<Bytes>; 8] { // lmao
+	[Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()]
 }
 
 pub fn handle_file(mut file: FileQueueEntry, meta_ref: MetaRef<FileMeta>, helper: &IOHelper) -> Result<(), BErr> {
@@ -185,7 +168,7 @@ pub fn handle_file(mut file: FileQueueEntry, meta_ref: MetaRef<FileMeta>, helper
 			let mut meta_refs = optioned_vec_of(if p2_container.named {
 				let meta = meta_ref.submit(NamedP2Meta::from(&p2_container, name));
 				let mut vec = Vec::with_capacity(meta.len());
-				for (n, r) in meta {
+				for (_, r) in meta {
 					vec.push(r);
 				}
 				vec
@@ -305,16 +288,17 @@ fn optioned_vec_of<T>(vec: Vec<T>) -> Vec<Option<T>> {
 	new_vec
 }
 
-fn arrays_suck<T>(mut arr: [Vec<T>; 8]) -> [Vec<Option<T>>; 8] {
+fn arrays_suck<T>(arr: [Vec<T>; 8]) -> [Vec<Option<T>>; 8] {
+	let [v0, v1, v2, v3, v4, v5, v6, v7] = arr;
 	[
-		optioned_vec_of(replace(&mut arr[0], Vec::new())),
-		optioned_vec_of(replace(&mut arr[1], Vec::new())),
-		optioned_vec_of(replace(&mut arr[2], Vec::new())),
-		optioned_vec_of(replace(&mut arr[3], Vec::new())),
-		optioned_vec_of(replace(&mut arr[4], Vec::new())),
-		optioned_vec_of(replace(&mut arr[5], Vec::new())),
-		optioned_vec_of(replace(&mut arr[6], Vec::new())),
-		optioned_vec_of(replace(&mut arr[7], Vec::new()))
+		optioned_vec_of(v0),
+		optioned_vec_of(v1),
+		optioned_vec_of(v2),
+		optioned_vec_of(v3),
+		optioned_vec_of(v4),
+		optioned_vec_of(v5),
+		optioned_vec_of(v6),
+		optioned_vec_of(v7)
 	]
 }
 

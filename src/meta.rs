@@ -39,6 +39,14 @@ impl DirectoryMeta {
 	pub fn add(&mut self, key: String) {
 		self.files.insert(key, FileMeta::Uninitialized);
 	}
+	
+	pub fn get_files(&self) -> &HashMap<String, FileMeta> {
+		&self.files
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
+	}
 }
 
 impl MetaSubmit for DirectoryMeta {
@@ -103,12 +111,30 @@ impl P2Meta {
 			files, unpacked_name
 		}
 	}
+	
+	pub fn get_files(&self) -> &[P2SubfileMeta] {
+		&self.files
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
+	}
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct P2SubfileMeta {
 	compressed: bool,
 	file: FileMeta
+}
+
+impl P2SubfileMeta {
+	pub fn is_compressed(&self) -> bool {
+		self.compressed
+	}
+	
+	pub fn get_file(&self) -> &FileMeta {
+		&self.file
+	}
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -142,6 +168,14 @@ impl NamedP2Meta {
 		NamedP2Meta {
 			files, unpacked_name
 		}
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
+	}
+	
+	pub fn get_files(&self) -> &[(String, P2SubfileMeta)] {
+		&self.files
 	}
 }
 
@@ -193,6 +227,35 @@ impl HPAKMeta {
 			unknown6_files: vec![FileMeta::Uninitialized; other.unknown6.len()],
 			nsbmd_files: vec![FileMeta::Uninitialized; other.nsbmd.len()],
 		}
+	}
+	
+	pub fn get_nsbca(&self) -> &[FileMeta] {
+		&self.nsbca_files
+	}
+	pub fn get_nsbva(&self) -> &[FileMeta] {
+		&self.nsbva_files
+	}
+	pub fn get_nsbma(&self) -> &[FileMeta] {
+		&self.nsbma_files
+	}
+	pub fn get_nsbtp(&self) -> &[FileMeta] {
+		&self.nsbtp_files
+	}
+	pub fn get_nsbta(&self) -> &[FileMeta] {
+		&self.nsbta_files
+	}
+	pub fn get_unknown5(&self) -> &[FileMeta] {
+		&self.unknown5_files
+	}
+	pub fn get_unknown6(&self) -> &[FileMeta] {
+		&self.unknown6_files
+	}
+	pub fn get_nsbmd(&self) -> &[FileMeta] {
+		&self.nsbmd_files
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
 	}
 }
 
@@ -249,6 +312,35 @@ impl PK2DMeta {
 			unknown7_files: vec![FileMeta::Uninitialized; other.unknown7.len()]
 		}
 	}
+	
+	pub fn get_nclr(&self) -> &[FileMeta] {
+		&self.nclr_files
+	}
+	pub fn get_ncgr(&self) -> &[FileMeta] {
+		&self.ncgr_files
+	}
+	pub fn get_unknown2(&self) -> &[FileMeta] {
+		&self.unknown2_files
+	}
+	pub fn get_ncer(&self) -> &[FileMeta] {
+		&self.ncer_files
+	}
+	pub fn get_unknown4(&self) -> &[FileMeta] {
+		&self.unknown4_files
+	}
+	pub fn get_nanr(&self) -> &[FileMeta] {
+		&self.nanr_files
+	}
+	pub fn get_nscr(&self) -> &[FileMeta] {
+		&self.nscr_files
+	}
+	pub fn get_unknown7(&self) -> &[FileMeta] {
+		&self.unknown7_files
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
+	}
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -276,6 +368,14 @@ impl PKACMeta {
 			unpacked_name,
 			files: other.files.iter().map(|(n, _)| (n.into(), FileMeta::Uninitialized)).collect()
 		}
+	}
+	
+	pub fn get_unpacked_name(&self) -> &str {
+		&self.unpacked_name
+	}
+	
+	pub fn get_files(&self) -> &[(String, FileMeta)] {
+		&self.files
 	}
 }
 
@@ -308,6 +408,14 @@ impl LZMeta {
 		LZMeta {
 			lz_type: ty, file: Box::new(FileMeta::Uninitialized)
 		}
+	}
+	
+	pub fn get_lz_type(&self) -> LZType {
+		self.lz_type
+	}
+	
+	pub fn get_file(&self) -> &Box<FileMeta> {
+		&self.file
 	}
 }
 

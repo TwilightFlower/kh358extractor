@@ -3,11 +3,13 @@ mod util;
 mod magic;
 mod extract;
 mod meta;
+mod pack;
 use std::{
 	env::args,
 	io,
 	io::Write,
 	fs::File,
+	fs,
 	path::PathBuf,
 	str,
 	mem::replace,
@@ -25,16 +27,26 @@ use iohelper::{
 use crate::util::*;
 use crate::magic::*;
 use crate::meta::{DirectoryMeta, FileMeta, MetaRef};
-use ron::{ser, ser::PrettyConfig};
+use crate::pack::pack_file;
+use ron::{ser, ser::PrettyConfig, de};
 
 type BErr = Box<dyn std::error::Error + 'static>;
-type GroupedFiles = [Option<Vec<Bytes>>; 8];
+type GroupedFiles = [Vec<Bytes>; 8];
 
 fn main() -> Result<(), BErr> {
 	let args = &args().collect::<Vec<String>>();
 	let target = PathBuf::from(&args[1]);
 	let out = PathBuf::from(&args[2]);
-	extract_tree(target, out)?;
+	let meta: FileMeta = de::from_str(&fs::read_to_string("meta.ron")?)?;
+	//extract_tree(target, out)?;
+	repack(target, out, &meta)?;
+	Ok(())
+}
+
+fn repack(target: PathBuf, out: PathBuf, meta: &FileMeta) -> Result<(), BErr> {
+	let helper = IOHelper::new(target, out);
+	let path = RelPath::new();
+	pack_file(&path, meta, &helper)?;
 	Ok(())
 }
 
@@ -52,8 +64,8 @@ fn extract_tree(target: PathBuf, out: PathBuf) -> Result<(), BErr> {
 	Ok(())
 }
 
-fn handle_extract_dir(helper: &IOHelper, in_path: &RelPath, meta_ref: MetaRef<FileMeta>) -> io::Result<()> {
-	let mut meta = DirectoryMeta::create(in_path.peek().to_string());
+fn handle_extract_dir(helper: &IOHelper, in_path: &RelPath, meta_ref: MetaRef<FileMeta>) -> Result<(), BErr> {
+	let mut meta = DirectoryMeta::create(in_path.peek());
 	for path in helper.read_dir(in_path)? {
 		let path = path?;
 		meta.add(path.peek());
