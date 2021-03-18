@@ -130,6 +130,15 @@ impl RelPath {
 		}
 	}
 	
+	pub fn prepend(self, e: String) -> Self {
+		let mut p = RelPath::new();
+		p.push(e);
+		for s in self.path {
+			p.push(s);
+		}
+		p
+	}
+	
 	pub fn pop(&mut self) -> Option<String> {
 		self.path.pop()
 	}

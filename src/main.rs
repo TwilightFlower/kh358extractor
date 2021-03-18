@@ -35,11 +35,24 @@ type GroupedFiles = [Vec<Bytes>; 8];
 
 fn main() -> Result<(), BErr> {
 	let args = &args().collect::<Vec<String>>();
-	let target = PathBuf::from(&args[1]);
-	let out = PathBuf::from(&args[2]);
-	let meta: FileMeta = de::from_str(&fs::read_to_string("meta.ron")?)?;
+	let action = String::from(&args[1]);
+	let target = PathBuf::from(&args[2]);
+	let out = PathBuf::from(&args[3]);
+	let meta = String::from(&args[4]);
+	match &action[..] {
+		"pack" => {
+			let meta: FileMeta = de::from_str(&fs::read_to_string(&meta)?)?;
+			repack(target, out, &meta)?;
+		}
+		"extract" => {
+			extract_tree(target, out, meta)?;
+		}
+		_ => {
+			println!("invalid action {}", action)
+		}
+	}
 	//extract_tree(target, out)?;
-	repack(target, out, &meta)?;
+	
 	Ok(())
 }
 
@@ -50,7 +63,7 @@ fn repack(target: PathBuf, out: PathBuf, meta: &FileMeta) -> Result<(), BErr> {
 	Ok(())
 }
 
-fn extract_tree(target: PathBuf, out: PathBuf) -> Result<(), BErr> {
+fn extract_tree(target: PathBuf, out: PathBuf, meta: String) -> Result<(), BErr> {
 	let manager = IOManager::new(target, out, |i| i, |f, m, h| {extract::handle_file(f, m, h).unwrap()});
 	let mut meta_root = Box::new(FileMeta::Uninitialized);
 	let meta_root_ref = unsafe{MetaRef::new(&mut *meta_root)};
@@ -59,7 +72,7 @@ fn extract_tree(target: PathBuf, out: PathBuf) -> Result<(), BErr> {
 	let config = PrettyConfig::new()
 		.with_indentor("\t".into());
 	let serialized = ser::to_string_pretty(&*meta_root, config)?;
-	let mut metafile = File::create("meta.ron")?;
+	let mut metafile = File::create(meta)?;
 	write!(metafile, "{}", serialized);
 	Ok(())
 }

@@ -23,7 +23,7 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 		FileMeta::LZ(lzm) => {
 			let compression_level = match lzm.get_lz_type() {
 				LZType::LZ10 => CompressionLevel::LZ10,
-				LZType::LZ11 => CompressionLevel::LZ11(18)
+				LZType::LZ11 => CompressionLevel::LZ11(5)
 			};
 			let file = pack_file(&path, &*lzm.get_file(), helper)?;
 			let mut buf = BytesMut::new().writer();
@@ -31,6 +31,7 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			Ok(buf.into_inner().freeze())
 		}
 		FileMeta::P2(p2m) => {
+			println!("{:?}", p2m);
 			path.push(p2m.get_unpacked_name().into());
 			let mut subfiles = Vec::with_capacity(p2m.get_files().len());
 			let p2_files = p2m.get_files();
@@ -38,7 +39,7 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
 					let mut tbuf = BytesMut::new().writer();
-					compress(&buf, &mut tbuf, CompressionLevel::LZ11(18))?;
+					compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
 					buf = tbuf.into_inner().freeze();
 				}
 				subfiles.push(P2Subfile {
@@ -61,7 +62,7 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
 					let mut tbuf = BytesMut::new().writer();
-					compress(&buf, &mut tbuf, CompressionLevel::LZ11(18))?;
+					compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
 					buf = tbuf.into_inner().freeze();
 				}
 				subfiles.push(P2Subfile {
@@ -82,7 +83,12 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			for (name, file) in pkac_meta.get_files() {
 				files.push((name.into(), pack_file(&path, file, helper)?));
 			}
-			Ok(GFWrapper(PKAC{files}.into()).into())
+			let bytes: Bytes = GFWrapper(PKAC{files}.into()).into();
+			let mut buf = BytesMut::new();
+			buf.put_u32_le(PKAC_MAGIC);
+			buf.put_u32_le(0);
+			buf.put(bytes);
+			Ok(buf.freeze())
 		}
 		FileMeta::HPAK(hpak_meta) => {
 			path.push(hpak_meta.get_unpacked_name().into());
@@ -96,7 +102,12 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 				unknown6: load_metas(&path, hpak_meta.get_unknown6(), helper)?,
 				nsbmd: load_metas(&path, hpak_meta.get_nsbmd(), helper)?
 			};
-			Ok(GFWrapper(hpak.into()).into())
+			let bytes: Bytes = GFWrapper(hpak.into()).into();
+			let mut buf = BytesMut::new();
+			buf.put_u32_le(HPAK_MAGIC);
+			buf.put_u32_le(0);
+			buf.put(bytes);
+			Ok(buf.freeze())
 		},
 		FileMeta::PK2D(pk2d_meta) => {
 			path.push(pk2d_meta.get_unpacked_name().into());
@@ -110,7 +121,12 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 				nscr: load_metas(&path, pk2d_meta.get_nscr(), helper)?,
 				unknown7: load_metas(&path, pk2d_meta.get_unknown7(), helper)?,
 			};
-			Ok(GFWrapper(pk2d.into()).into())
+			let bytes: Bytes = GFWrapper(pk2d.into()).into();
+			let mut buf = BytesMut::new();
+			buf.put_u32_le(PK2D_MAGIC);
+			buf.put_u32_le(0);
+			buf.put(bytes);
+			Ok(buf.freeze())
 		},
 		FileMeta::Directory(dir_meta) => {
 			path.push(dir_meta.get_unpacked_name().into());
@@ -281,6 +297,6 @@ impl Into<Bytes> for GFWrapper { // does not contain magic bytes or 4 padding!
 				}
 			}
 		}
-		Bytes::new()
+		buf.freeze()
 	}
 }

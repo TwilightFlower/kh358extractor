@@ -93,7 +93,7 @@ impl TryFrom<[Vec<Bytes>; 8]> for PKAC {
 	type Error = BErr;
 	fn try_from(other: [Vec<Bytes>; 8]) -> Result<Self, Self::Error> {
 		if !other[0].is_empty() {
-			if !other[1].is_empty() {
+			if true {
 				let nametable = read_nametable(&other[0][0])?;
 				let files = &other[1];
 				if nametable.len() >= files.len() {

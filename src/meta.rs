@@ -6,7 +6,7 @@ use crate::{
 	P2File, PKAC, PK2D, HPAK
 };
 // Metadata needed to properly re-pack things.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum FileMeta {
 	Directory(DirectoryMeta),
 	P2(P2Meta),
@@ -25,7 +25,7 @@ impl MetaSubmit for FileMeta {
 	unsafe fn on_submit(&mut self) {}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DirectoryMeta {
 	unpacked_name: String,
 	files: HashMap<String, FileMeta>
@@ -79,7 +79,7 @@ impl DirectoryMeta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct P2Meta {
 	unpacked_name: String,
 	files: Vec<P2SubfileMeta>
@@ -121,7 +121,7 @@ impl P2Meta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct P2SubfileMeta {
 	compressed: bool,
 	file: FileMeta
@@ -137,7 +137,7 @@ impl P2SubfileMeta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NamedP2Meta {
 	unpacked_name: String,
 	files: Vec<(String, P2SubfileMeta)>
@@ -179,7 +179,7 @@ impl NamedP2Meta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HPAKMeta {
 	unpacked_name: String,
 	nsbca_files: Vec<FileMeta>,
@@ -263,7 +263,7 @@ unsafe fn get_refs_vec(vec: &mut Vec<FileMeta>) -> Vec<MetaRef<FileMeta>> {
 	vec.iter_mut().map(|m| MetaRef::new(m)).collect()
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PK2DMeta {
 	unpacked_name: String,
 	nclr_files: Vec<FileMeta>,
@@ -343,7 +343,7 @@ impl PK2DMeta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PKACMeta {
 	unpacked_name: String,
 	files: Vec<(String, FileMeta)>
@@ -379,13 +379,13 @@ impl PKACMeta {
 	}
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LZMeta {
 	lz_type: LZType,
 	file: Box<FileMeta>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LZType {
 	LZ10, LZ11
 }
