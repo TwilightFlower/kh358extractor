@@ -19,10 +19,20 @@ pub struct JankyThreadPool<T: Send + 'static> {
 	threads: Vec<JoinHandle<()>>
 }
 
-#[derive(Clone)]
+//#[derive(Clone)]
 pub struct TaskSender<T: Send + 'static> {
 	pending_task_count: Arc<AtomicU32>,
 	tx: Sender<T>
+}
+
+// for some reason derive breaks when T isn't Clone!?
+impl<T: Send + 'static> Clone for TaskSender<T> {
+	fn clone(&self) -> Self {
+		TaskSender {
+			pending_task_count: self.pending_task_count.clone(),
+			tx: self.tx.clone()
+		}
+	}
 }
 
 impl<T: Send + 'static> TaskSender<T> {
@@ -33,7 +43,7 @@ impl<T: Send + 'static> TaskSender<T> {
 }
 
 impl<T: Send + 'static> JankyThreadPool<T> {
-	pub fn new<U: Send + 'static>(thread_count: u32, task_consumer: impl Fn(T, &U) + Send + 'static + Clone, wrapper: impl Fn(TaskSender<T>) -> U) -> Self {
+	pub fn new<U>(thread_count: u32, task_consumer: impl Fn(T, &U) + Send + 'static + Clone, wrapper: impl Fn(TaskSender<T>) -> U + Send + 'static + Clone) -> Self {
 		let (tx, rx) = unbounded();
 		let mut pool = JankyThreadPool {
 			tx, rx,
@@ -42,11 +52,11 @@ impl<T: Send + 'static> JankyThreadPool<T> {
 			threads: Vec::new(),
 		};
 		for _ in 0..thread_count {
-			let (pending_task_count, live, tx, rx, tc) = (pool.pending_task_count.clone(), pool.live.clone(), pool.tx.clone(), pool.rx.clone(), task_consumer.clone());
-			let tx = wrapper(TaskSender {
-				pending_task_count: pending_task_count.clone(), tx
-			});
+			let (pending_task_count, live, tx, rx, tc, wr) = (pool.pending_task_count.clone(), pool.live.clone(), pool.tx.clone(), pool.rx.clone(), task_consumer.clone(), wrapper.clone());
 			pool.threads.push(spawn(move || {
+				let tx = wr(TaskSender {
+					pending_task_count: pending_task_count.clone(), tx
+				});
 				while live.load(Ordering::Relaxed) || pending_task_count.load(Ordering::Relaxed) > 0 {
 					if let Ok(t) = rx.recv_timeout(Duration::new(5, 0)) {
 						tc(t, &tx);

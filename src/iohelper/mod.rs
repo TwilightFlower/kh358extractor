@@ -1,9 +1,12 @@
 mod threads;
 use threads::*;
-use crate::{FileType, BErr};
+use crate::{
+	FileType, BErr,
+	meta::{MetaRef, FileMeta}
+};
 use std::{
 	io::{prelude::*},
-	ffi::OsString,
+	ffi::{OsString, OsStr},
 	io,
 	path::PathBuf,
 	fs::{read_dir, create_dir_all, File},
@@ -13,16 +16,20 @@ use crossbeam_channel::{Sender, Receiver};
 
 pub struct IOManager {
 	helper: IOHelper,
-	pool: JankyThreadPool<FileQueueEntry>
+	pool: JankyThreadPool<FileQueueEntryInternal>
 }
 
 impl IOManager {
-	pub fn new(in_root: PathBuf, out_root: PathBuf, file_handler: impl Fn(FileQueueEntry, &IOHelper) + Send + 'static + Clone) -> Self {
+	pub fn new<T>(in_root: PathBuf, out_root: PathBuf, setup_fn: impl Fn(IOHelper) -> T + Sync + 'static + Send + Clone, file_handler: impl Fn(FileQueueEntry, MetaRef<FileMeta>, &T) + Send + 'static + Sync + Clone) -> Self {
 		let (ic, oc) = (in_root.clone(), out_root.clone());
-		let pool = JankyThreadPool::new(4, file_handler, |s| {
-			IOHelper {
+		let pool = JankyThreadPool::new(4, move |iqe: FileQueueEntryInternal, hlp| {
+			let entry = iqe.entry;
+			let mref = iqe.meta_ref;
+			file_handler(entry, mref, hlp)
+		}, move |s| {
+			setup_fn(IOHelper {
 				in_root: in_root.clone(), out_root: out_root.clone(), file_tx: s
-			}
+			})
 		});
 		IOManager {
 			helper: IOHelper {
@@ -46,7 +53,7 @@ impl IOManager {
 pub struct IOHelper {
 	in_root: PathBuf,
 	out_root: PathBuf,
-	file_tx: TaskSender<FileQueueEntry>
+	file_tx: TaskSender<FileQueueEntryInternal>
 }
 
 impl IOHelper {
@@ -64,7 +71,7 @@ impl IOHelper {
 				res.map(|p| {
 					if let Some(subpath) = p.path().file_name() { 
 						let mut parent = path.clone();
-						parent.push(subpath.to_os_string());
+						parent.push(subpath.to_str().unwrap().into());
 						parent
 					} else {
 						path.clone()
@@ -87,11 +94,12 @@ impl IOHelper {
 		create_dir_all(path.resolve(self.out_root.clone()))
 	}
 	
-	pub fn queue_or_write(&self, entry: FileQueueEntry) -> io::Result<()> {
+	pub fn queue_or_write(&self, entry: FileQueueEntry, meta_ref: MetaRef<FileMeta>) -> io::Result<()> {
 		if entry.get_or_guess_type().still_packed() {
-			self.file_tx.send(entry);
+			self.file_tx.send(FileQueueEntryInternal{entry, meta_ref});
 			Ok(())
 		} else {
+			meta_ref.submit(FileMeta::OtherFile(entry.path.peek()));
 			self.write_file(&entry.path, &entry.content)
 		}
 	}
@@ -103,15 +111,15 @@ impl IOHelper {
 
 #[derive(Clone, Debug)]
 pub struct RelPath {
-	path: Vec<OsString>
+	path: Vec<String>
 }
 
 impl RelPath {
-	pub fn push(&mut self, p: OsString) {
+	pub fn push(&mut self, p: String) {
 		self.path.push(p)
 	}
 	
-	pub fn pop(&mut self) -> Option<OsString> {
+	pub fn pop(&mut self) -> Option<String> {
 		self.path.pop()
 	}
 	
@@ -127,15 +135,29 @@ impl RelPath {
 			path: Vec::new()
 		}
 	}
+	
+	pub fn peek(&self) -> String {
+		if self.path.is_empty() {
+			String::from("")
+		} else {
+			self.path.last().cloned().unwrap() // why does this convert &OsString to &OsStr? no clue
+		}
+	}
 }
 
-#[derive(Clone)]
 pub struct FileQueueEntry {
 	pub content: Bytes,
 	pub path: RelPath,
 	pub type_hint: Option<FileType>,
-	pub compression_hint: Option<bool>
+	pub compression_hint: Option<bool>,
 }
+
+struct FileQueueEntryInternal {
+	entry: FileQueueEntry,
+	meta_ref: MetaRef<FileMeta>
+}
+
+unsafe impl Send for FileQueueEntryInternal{}
 
 impl FileQueueEntry {
 	pub fn get_or_guess_type(&self) -> FileType {

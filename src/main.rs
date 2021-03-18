@@ -2,9 +2,12 @@ mod iohelper;
 mod util;
 mod magic;
 mod extract;
+mod meta;
 use std::{
 	env::args,
 	io,
+	io::Write,
+	fs::File,
 	path::PathBuf,
 	str,
 	mem::replace,
@@ -21,6 +24,8 @@ use iohelper::{
 };
 use crate::util::*;
 use crate::magic::*;
+use crate::meta::{DirectoryMeta, FileMeta, MetaRef};
+use ron::{ser, ser::PrettyConfig};
 
 type BErr = Box<dyn std::error::Error + 'static>;
 type GroupedFiles = [Option<Vec<Bytes>>; 8];
@@ -34,24 +39,38 @@ fn main() -> Result<(), BErr> {
 }
 
 fn extract_tree(target: PathBuf, out: PathBuf) -> Result<(), BErr> {
-	let manager = IOManager::new(target, out, |f, h| {extract::handle_file(f, h).unwrap()});
-	handle_extract_dir(manager.get_helper(), &RelPath::new())?;
+	let manager = IOManager::new(target, out, |i| i, |f, m, h| {extract::handle_file(f, m, h).unwrap()});
+	let mut meta_root = Box::new(FileMeta::Uninitialized);
+	let meta_root_ref = unsafe{MetaRef::new(&mut *meta_root)};
+	handle_extract_dir(manager.get_helper(), &RelPath::new(), meta_root_ref)?;
 	manager.join();
+	let config = PrettyConfig::new()
+		.with_indentor("\t".into());
+	let serialized = ser::to_string_pretty(&*meta_root, config)?;
+	let mut metafile = File::create("meta.ron")?;
+	write!(metafile, "{}", serialized);
 	Ok(())
 }
 
-fn handle_extract_dir(helper: &IOHelper, in_path: &RelPath) -> io::Result<()> {
+fn handle_extract_dir(helper: &IOHelper, in_path: &RelPath, meta_ref: MetaRef<FileMeta>) -> io::Result<()> {
+	let mut meta = DirectoryMeta::create(in_path.peek().to_string());
 	for path in helper.read_dir(in_path)? {
 		let path = path?;
+		meta.add(path.peek());
+	}
+	let meta_refs = meta_ref.submit(meta);
+	for (name, meta_ref) in meta_refs {
+		let mut path = in_path.clone();
+		path.push(name);
 		if helper.is_dir(&path) {
-			handle_extract_dir(&helper, &path)
+			handle_extract_dir(helper, &path, meta_ref)
 		} else {
 			helper.queue_or_write(FileQueueEntry {
 				path: path.clone(),
 				content: helper.read_file(&path)?,
 				type_hint: None, compression_hint: None
-			})
-		}?;
+			}, meta_ref)
+		}?
 	}
 	Ok(())
 }
@@ -167,7 +186,8 @@ impl FileType {
 	}
 }
 
-struct P2File {
+pub struct P2File {
+	named: bool,
 	subfiles: Vec<P2Subfile>
 }
 
@@ -179,7 +199,7 @@ struct P2Subfile {
 }
 
 #[derive(Debug)]
-struct HPAK {
+pub struct HPAK {
 	nsbca: Vec<Bytes>,
 	nsbva: Vec<Bytes>,
 	nsbma: Vec<Bytes>,
@@ -208,7 +228,7 @@ impl HPAK {
 
 
 #[derive(Debug)]
-struct PK2D {
+pub struct PK2D {
 	nclr: Vec<Bytes>,
 	ncgr: Vec<Bytes>,
 	unknown2: Vec<Bytes>,
@@ -237,7 +257,7 @@ impl PK2D {
 
 
 #[derive(Debug)]
-struct PKAC {
+pub struct PKAC {
 	files: Vec<(String, Bytes)>
 }
 

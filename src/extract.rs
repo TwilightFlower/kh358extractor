@@ -3,6 +3,9 @@ use crate::iohelper::{
 	IOHelper, IOManager, FileQueueEntry, RelPath
 };
 use crate::util::{UnwrapError, TryUnwrap};
+use crate::meta::{
+	FileMeta, MetaRef, P2Meta, NamedP2Meta, LZMeta, LZType, HPAKMeta, PK2DMeta, PKACMeta
+};
 use bytes::{Bytes, Buf};
 use std::{
 	mem::replace,
@@ -59,7 +62,9 @@ impl Parse for P2File {
 				compressed: f.compressed.unwrap(),
 			}
 		}).collect();
-		P2File{subfiles}
+		P2File {
+			subfiles, named: has_name_table
+		}
 	}
 }
 
@@ -165,7 +170,7 @@ fn make_file_table() -> [Option<Vec<Bytes>>; 8] { // lmao
 	[Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new())]
 }
 
-pub fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BErr> {
+pub fn handle_file(mut file: FileQueueEntry, meta_ref: MetaRef<FileMeta>, helper: &IOHelper) -> Result<(), BErr> {
 	let ty = file.get_or_guess_type();
 	if file.content.is_empty() {
 		println!("Ignoring empty file {:?}", file.path)
@@ -175,30 +180,47 @@ pub fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BE
 		FileType::P2 => {
 			//println!("extract p2 {:?}", file.path);
 			helper.create_dir(&file.path)?;
-			for mut p2f in P2File::parse(&file.content).subfiles {
+			let p2_container = P2File::parse(&file.content);
+			let name = file.path.peek();
+			let mut meta_refs = optioned_vec_of(if p2_container.named {
+				let meta = meta_ref.submit(NamedP2Meta::from(&p2_container, name));
+				let mut vec = Vec::with_capacity(meta.len());
+				for (n, r) in meta {
+					vec.push(r);
+				}
+				vec
+			} else {
+				meta_ref.submit(P2Meta::from(&p2_container, name))
+			});
+			//let meta_refs = meta.submit(mut u: U)
+			for mut p2f in p2_container.subfiles {
+				let meta_ref = replace(&mut meta_refs[p2f.index as usize], None).unwrap();
 				if p2f.content.is_empty() {
 					println!("Ignoring empty P2 subfile at index {} in {:?}", p2f.index, file.path);
+					meta_ref.submit(FileMeta::EmptyFile);
 					continue;
 				}
 				p2f.decompress()?;
 				let t_guess = FileType::guess_from(&p2f.content, false);
 				let name = format!("{}.{}", p2f.suggest_name(), t_guess.get_extension());
 				let mut p = file.path.clone();
-				p.push(OsString::from(name));
+				p.push(name);
 				helper.queue_or_write(FileQueueEntry {
 					path: p,
 					content: p2f.content,
 					type_hint: Some(t_guess),
 					compression_hint: Some(false)
-				})?
+				}, meta_ref)?
 			}
 		},
 		FileType::LZ => {
 			//println!("decompress {:?}", file.path);
+			let lz_type = if file.content[0] == 0x10 {LZType::LZ10} else {LZType::LZ11};
+			let meta_ref = meta_ref.submit(LZMeta::new(lz_type));
 			file.content = Bytes::from(decompress(&mut file.content.reader())?);
 			file.type_hint = None;
 			file.compression_hint = Some(false);
-			helper.queue_or_write(file)?
+			helper.queue_or_write(file, meta_ref)?
 		},
 		FileType::HPAK | FileType::PK2D => {
 			//println!("extract asset store {:?}", file.path);
@@ -206,9 +228,10 @@ pub fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BE
 			let files = GroupedFiles::parse(&file.content);
 			let parsed = AssetBundle::from_filegroups(files, ty)?;
 			let map = parsed.get_type_map().try_unwrap().map_err(|x| x.strip_data())?;
-			for (typ, group) in &map {
-				for (i, data) in group.iter().enumerate() {
-					let name = OsString::from(format!("{}.{}", i, typ.get_extension()));
+			let mut meta_refs = arrays_suck(parsed.submit_meta_to(meta_ref, file.path.peek()));
+			for (i1, (typ, group)) in map.iter().enumerate() {
+				for (i2, data) in group.iter().enumerate() {
+					let name = format!("{}.{}", i2, typ.get_extension());
 					let mut new_path = file.path.clone();
 					new_path.push(name);
 					helper.queue_or_write(FileQueueEntry {
@@ -216,7 +239,7 @@ pub fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BE
 						content: data.clone(),
 						type_hint: Some(*typ),
 						compression_hint: None
-					})?
+					}, replace(&mut meta_refs[i1][i2], None).unwrap())?
 				}
 			}
 		},
@@ -224,17 +247,19 @@ pub fn handle_file(mut file: FileQueueEntry, helper: &IOHelper) -> Result<(), BE
 			helper.create_dir(&file.path)?;
 			let parsed = GroupedFiles::parse(&file.content);
 			let pkac: PKAC = parsed.try_into()?;
-			for (name, subfile) in pkac.files {
+			let meta = PKACMeta::from(&pkac, file.path.peek());
+			let mut meta_refs = optioned_vec_of(meta_ref.submit(meta));
+			for (i, (name, subfile)) in pkac.files.iter().enumerate() {
 				let ty = FileType::guess_from(&subfile, true); // unsure if can be compressed or not
-				let name = OsString::from(format!("{}.{}", name, ty.get_extension()));
+				let name = format!("{}.{}", name, ty.get_extension());
 				let mut new_path = file.path.clone();
 				new_path.push(name);
 				helper.queue_or_write(FileQueueEntry {
 					path: new_path,
-					content: subfile,
+					content: subfile.clone(),
 					type_hint: Some(ty),
 					compression_hint: None
-				})?;
+				}, replace(&mut meta_refs[i], None).unwrap().1)?;
 			}
 		}
 		_ => ()
@@ -263,5 +288,33 @@ impl AssetBundle {
 			_ => Err(format!("attempted to read assetbundle with non-assetbundle type {:?}", ty).into())
 		}
 	}
+	
+	pub fn submit_meta_to(&self, meta_ref: MetaRef<FileMeta>, unpacked_name: String) -> [Vec<MetaRef<FileMeta>>; 8] {
+		match self {
+			Self::HPAK(h) => meta_ref.submit(HPAKMeta::from(h, unpacked_name)),
+			Self::PK2D(p) => meta_ref.submit(PK2DMeta::from(p, unpacked_name))
+		}
+	}
+}
+
+fn optioned_vec_of<T>(vec: Vec<T>) -> Vec<Option<T>> {
+	let mut new_vec = Vec::with_capacity(vec.len());
+	for t in vec {
+		new_vec.push(Some(t));
+	}
+	new_vec
+}
+
+fn arrays_suck<T>(mut arr: [Vec<T>; 8]) -> [Vec<Option<T>>; 8] {
+	[
+		optioned_vec_of(replace(&mut arr[0], Vec::new())),
+		optioned_vec_of(replace(&mut arr[1], Vec::new())),
+		optioned_vec_of(replace(&mut arr[2], Vec::new())),
+		optioned_vec_of(replace(&mut arr[3], Vec::new())),
+		optioned_vec_of(replace(&mut arr[4], Vec::new())),
+		optioned_vec_of(replace(&mut arr[5], Vec::new())),
+		optioned_vec_of(replace(&mut arr[6], Vec::new())),
+		optioned_vec_of(replace(&mut arr[7], Vec::new()))
+	]
 }
 
