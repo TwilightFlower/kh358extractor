@@ -22,26 +22,19 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			Ok(Bytes::new())
 		},
 		FileMeta::LZ(lzm) => {
-			/*let compression_level = match lzm.get_lz_type() {
-				LZType::LZ10 => CompressionLevel::LZ10,
-				LZType::LZ11 => CompressionLevel::LZ11(5)
-			};*/
 			let file = pack_file(&path, &*lzm.get_file(), helper)?;
 			let compressed = safe_compress(&file)?;
 			let bytes = Bytes::copy_from_slice(&compressed);
 			Ok(bytes)
 		}
 		FileMeta::P2(p2m) => {
-			//println!("{:?}", p2m);
 			path.push(p2m.get_unpacked_name().into());
 			let mut subfiles = Vec::with_capacity(p2m.get_files().len());
 			let p2_files = p2m.get_files();
 			for (i, file) in p2_files.iter().enumerate() {
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
-					//let mut tbuf = BytesMut::with_capacity(buf.len()).writer();
-					//compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
-					//buf = tbuf.into_inner().freeze();
+					// TODO parallelize this 
 					let compressed = safe_compress(&buf)?;
 					buf = Bytes::copy_from_slice(&compressed);
 				}
@@ -65,9 +58,6 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			for (i, (name, file)) in p2_files.iter().enumerate() {
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
-					/*let mut tbuf = BytesMut::with_capacity(buf.len()).writer();
-					compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
-					buf = tbuf.into_inner().freeze();*/
 					let compressed = safe_compress(&buf)?;
 					buf = Bytes::copy_from_slice(&compressed);
 				}
@@ -163,6 +153,14 @@ fn load_metas(parent_path: &RelPath, metas: &[FileMeta], helper: &IOHelper) -> R
 	Ok(res)
 }
 
+fn next_multiple_of_512(from: usize) -> usize {
+	if from & 511 == 0 {
+		from
+	} else {
+		((from >> 9) + 1) << 9
+	}
+}
+
 impl Into<Bytes> for P2File {
 	fn into(self) -> Bytes {
 		let n_files = self.subfiles.len() as u16;
@@ -174,16 +172,11 @@ impl Into<Bytes> for P2File {
 		header_buf.put_u32_le(0); // placeholder
 		
 		let mut contents_buf = BytesMut::new();
-		let mut cur_offs = 0;
 		for file in &self.subfiles {
-			header_buf.put_u16_le((cur_offs >> 9) as u16);
-			let len = file.content.len();
-			let dist_from_block = 512 - (len & 511);
-			cur_offs += len + dist_from_block;
+			header_buf.put_u16_le((contents_buf.len() >> 9) as u16);
 			contents_buf.put(file.content.clone());
-			if dist_from_block != 512 {
-				contents_buf.put(&NULS[..dist_from_block]);
-			}
+			let dist = next_multiple_of_512(contents_buf.len()) - contents_buf.len();
+			contents_buf.put(&NULS[..dist]);
 		}
 		let contents_buf = contents_buf.freeze();
 		if n_files & 1 != 0 {
@@ -202,13 +195,9 @@ impl Into<Bytes> for P2File {
 				header_buf.put(&NULS[..8 - name_bytes.len()]);
 			}
 		}
-		let mut header_size = header_buf.len() >> 9;
-		let header_dist = 512 - (header_buf.len() & 511);
-		if header_dist != 512 {
-			header_size += 1;
-			header_buf.put(&NULS[..header_dist]);
-		}
-		header_size <<= 9;
+		let header_size = next_multiple_of_512(header_buf.len());
+		let header_dist = header_size - header_buf.len();
+		header_buf.put(&NULS[..header_dist]);
 		let mut header_s_bytes = &mut header_buf[header_size_ptr..header_size_ptr + 4];
 		header_s_bytes.put_u32_le(header_size as u32);
 		header_buf.put(contents_buf);
@@ -280,13 +269,14 @@ impl Into<Bytes> for GFWrapper { // does not contain magic bytes or 4 padding!
 	fn into(self) -> Bytes {
 		let mut buf = BytesMut::new();
 		buf.put(&FFS[..32]);
-		let mut info_offsets = [0; 8];
+		let mut offset_offsets = [0; 8];
 		for (i, group) in self.0.iter().enumerate() {
 			if !group.is_empty() {
+				let info_offset = buf.len();
 				buf.put_u32_le(group.len() as u32);
-				info_offsets[i] = buf.len();
+				offset_offsets[i] = buf.len();
 				let mut info_loc = &mut buf[i * 4..]; 
-				info_loc.put_u32_le(info_offsets[i] as u32 + 8); // account for missing magic + padding
+				info_loc.put_u32_le(info_offset as u32 + 8); // account for missing magic + padding
 				buf.put(&NULS[..4 * group.len()]);
 				for f in group.iter() {
 					buf.put_u32_le(f.len() as u32);
@@ -297,7 +287,7 @@ impl Into<Bytes> for GFWrapper { // does not contain magic bytes or 4 padding!
 			if !group.is_empty() {
 				for (fi, file) in group.iter().enumerate() {
 					let offset = buf.len() + 8;
-					let mut offset_buf = &mut buf[info_offsets[i] + fi * 4..];
+					let mut offset_buf = &mut buf[offset_offsets[i] + fi * 4..];
 					offset_buf.put_u32_le(offset as u32);
 					buf.put(&file[..]);
 				}

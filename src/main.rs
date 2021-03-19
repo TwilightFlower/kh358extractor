@@ -298,10 +298,9 @@ impl P2Subfile {
 	
 	fn decompress(&mut self) -> Result<(), BErr> {
 		if self.compressed {
-			let decompressed = decompress(&mut self.content.clone().reader()).map(Bytes::from)?;
+			let decompressed = decompress(&mut self.content.clone().reader()).map(Bytes::from).unwrap();
 			self.compressed = false;
 			self.content = decompressed;
-			
 		}
 		Ok(())
 	}

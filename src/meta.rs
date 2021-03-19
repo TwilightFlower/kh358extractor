@@ -414,7 +414,7 @@ impl LZMeta {
 		self.lz_type
 	}
 	
-	pub fn get_file(&self) -> &Box<FileMeta> {
+	pub fn get_file(&self) -> &FileMeta {
 		&self.file
 	}
 }

@@ -82,7 +82,6 @@ impl IOHelper {
 	}
 
 	pub fn write_file(&self, path: &RelPath, content: &[u8]) -> io::Result<()> {
-		println!("write {:?}", path);
 		let mut path = path.clone();
 		let syspath = path.resolve(self.out_root.clone());
 		path.pop();

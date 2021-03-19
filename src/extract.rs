@@ -200,7 +200,7 @@ pub fn handle_file(mut file: FileQueueEntry, meta_ref: MetaRef<FileMeta>, helper
 			//println!("decompress {:?}", file.path);
 			let lz_type = if file.content[0] == 0x10 {LZType::LZ10} else {LZType::LZ11};
 			let meta_ref = meta_ref.submit(LZMeta::new(lz_type));
-			file.content = Bytes::from(decompress(&mut file.content.reader())?);
+			file.content = Bytes::from(decompress(&mut file.content.reader()).unwrap());
 			file.type_hint = None;
 			file.compression_hint = Some(false);
 			helper.queue_or_write(file, meta_ref)?
