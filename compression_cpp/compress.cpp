@@ -63,7 +63,7 @@ CompressResult compress(char* _inData, long inLength, char* (*bufCreator)(long))
     _outData.push_back(0x11);
     _outData.push_back((char)(inLength & 0xFF));
     _outData.push_back((char)((inLength >> 0x08) & 0xFF));
-    _outData.push_back((char)((inLength >> 0x0F) & 0xFF));
+    _outData.push_back((char)((inLength >> 0x10) & 0xFF));
 
     int _compLength = 4;
     char* _inStart = &_inData[0];
