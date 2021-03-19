@@ -51,6 +51,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0dcbc35f504eb6fc275a6d20e4ebcda18cf50d40ba6fabff8c711fa16cb3b16"
 
 [[package]]
+name = "cc"
+version = "1.0.67"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3c69b077ad434294d3ce9f1f6143a2a4b89a8a2d54ef813d85003a4fd1137fd"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -93,6 +99,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cty"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7313c0d620d0cb4dbd9d019e461a4beb501071ff46ec0ab933efb4daa76d73e3"
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,7 +118,9 @@ name = "kh358extractor"
 version = "0.3.0"
 dependencies = [
  "bytes",
+ "cc",
  "crossbeam-channel",
+ "cty",
  "nintendo-lz",
  "ron",
  "serde",

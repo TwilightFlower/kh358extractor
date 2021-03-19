@@ -2,10 +2,11 @@ use crate::{
 	meta::{FileMeta, LZType},
 	iohelper::{IOHelper, RelPath},
 	P2File, PKAC, PK2D, HPAK, BErr, P2Subfile, GroupedFiles,
-	magic::*
+	magic::*,
+	compression::safe_compress
 };
 use bytes::{Bytes, BytesMut, BufMut};
-use nintendo_lz::{CompressionLevel, compress};
+//use nintendo_lz::{CompressionLevel, compress};
 
 const NULS: [u8; 2048] = [0; 2048]; // bunch of nul to copy
 const FFS: [u8; 32] = [0xFF; 32];
@@ -21,27 +22,30 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			Ok(Bytes::new())
 		},
 		FileMeta::LZ(lzm) => {
-			let compression_level = match lzm.get_lz_type() {
+			/*let compression_level = match lzm.get_lz_type() {
 				LZType::LZ10 => CompressionLevel::LZ10,
 				LZType::LZ11 => CompressionLevel::LZ11(5)
-			};
+			};*/
 			let file = pack_file(&path, &*lzm.get_file(), helper)?;
-			let mut buf = BytesMut::new().writer();
-			compress(&file, &mut buf, compression_level)?;
-			Ok(buf.into_inner().freeze())
+			let compressed = safe_compress(&file)?;
+			let bytes = Bytes::copy_from_slice(&compressed);
+			Ok(bytes)
 		}
 		FileMeta::P2(p2m) => {
-			println!("{:?}", p2m);
+			//println!("{:?}", p2m);
 			path.push(p2m.get_unpacked_name().into());
 			let mut subfiles = Vec::with_capacity(p2m.get_files().len());
 			let p2_files = p2m.get_files();
 			for (i, file) in p2_files.iter().enumerate() {
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
-					let mut tbuf = BytesMut::new().writer();
-					compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
-					buf = tbuf.into_inner().freeze();
+					//let mut tbuf = BytesMut::with_capacity(buf.len()).writer();
+					//compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
+					//buf = tbuf.into_inner().freeze();
+					let compressed = safe_compress(&buf)?;
+					buf = Bytes::copy_from_slice(&compressed);
 				}
+				
 				subfiles.push(P2Subfile {
 					index: i as u16,
 					compressed: file.is_compressed(),
@@ -61,9 +65,11 @@ pub fn pack_file(parent_unpacked_path: &RelPath, meta: &FileMeta, helper: &IOHel
 			for (i, (name, file)) in p2_files.iter().enumerate() {
 				let mut buf = pack_file(&path, file.get_file(), helper)?;
 				if file.is_compressed() && !buf.is_empty() {
-					let mut tbuf = BytesMut::new().writer();
+					/*let mut tbuf = BytesMut::with_capacity(buf.len()).writer();
 					compress(&buf, &mut tbuf, CompressionLevel::LZ11(5))?;
-					buf = tbuf.into_inner().freeze();
+					buf = tbuf.into_inner().freeze();*/
+					let compressed = safe_compress(&buf)?;
+					buf = Bytes::copy_from_slice(&compressed);
 				}
 				subfiles.push(P2Subfile {
 					index: i as u16,

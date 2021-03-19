@@ -4,6 +4,7 @@ mod magic;
 mod extract;
 mod meta;
 mod pack;
+mod compression;
 use std::{
 	env::args,
 	io,
