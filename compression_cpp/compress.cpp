@@ -5,16 +5,6 @@
 
 using namespace std;
 
-/*struct CompressResult {
-	const char* buf;
-	long length;
-	int retcode;
-};*/
-
-void deallocBuf(char* buf) {
-	delete[] buf;
-}
-
 int getOccurLength(char* newPtr, int newLength, char* oldPtr, int oldLength, int& disp, int minDisp = 1)
 {
     disp = 0;
@@ -49,12 +39,12 @@ int getOccurLength(char* newPtr, int newLength, char* oldPtr, int oldLength, int
     return maxLength;
 }
 
-CompressResult compress(char* _inData, long inLength)
+CompressResult compress(char* _inData, long inLength, char* (*bufCreator)(long))
 {
 	CompressResult res;
     if (inLength > 0xFFFFFF) {
-    	res.buf = _inData;
-    	res.length = inLength;
+    	res.buf = 0;
+    	res.length = 0;
     	res.retcode = -2;
         return res;
     }
@@ -151,8 +141,11 @@ CompressResult compress(char* _inData, long inLength)
 
         _compLength += _bufLength;
     }
-    res.buf = (const char*)_outData.data();
-    res.length = _outData.size();
+    long returnBufLen = _outData.size();
+    char* returnBuf = bufCreator(returnBufLen);
+    memcpy(returnBuf, (const char*)_outData.data(), returnBufLen);
+    res.buf = returnBuf;
+    res.length = returnBufLen;
     res.retcode = 0;
     return res;
 }
